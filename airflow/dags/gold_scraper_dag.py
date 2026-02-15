@@ -233,5 +233,48 @@ cleanup_task = PythonOperator(
     dag=dag,
 )
 
+
+
+def store_in_postgres(**context):
+    """Store scraped data in PostgreSQL"""
+    import psycopg2
+    
+    # Get data from previous task
+    ti = context['ti']
+    data = ti.xcom_pull(task_ids='scrape_task_id')
+    
+    # Connect to PostgreSQL
+    conn = psycopg2.connect(
+        host="localhost",
+        database="gold_prices_db",
+        user="postgres",
+        password="your_password"
+    )
+    cursor = conn.cursor()
+    
+    # Insert data
+    insert_query = """
+        INSERT INTO gold_prices 
+        (price_date, open_price, close_price, high_price, low_price, volume)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON CONFLICT (price_date) DO NOTHING;
+    """
+    
+    for record in data:
+        cursor.execute(insert_query, (
+            record['date'],
+            record.get('open'),
+            record['close'],
+            record.get('high'),
+            record.get('low'),
+            record.get('volume', 0)
+        ))
+    
+    conn.commit()
+    cursor.close()
+    conn.close()
+    
+    print(f"✓ Stored {len(data)} records in PostgreSQL")
+
 # Set task dependencies
 scrape_task >> validate_task >> summary_task >> cleanup_task
