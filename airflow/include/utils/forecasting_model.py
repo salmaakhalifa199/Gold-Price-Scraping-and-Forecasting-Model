@@ -627,6 +627,8 @@ def plot_complete_forecast(train_data, test_data, predictions, conf_lower, conf_
     except Exception as e:
         print(f"Warning: Could not save complete forecast plot - {e}")
 
+#forecasting_model.py pipeline
+
 
 # ============================================================================
 # MAIN EXECUTION
