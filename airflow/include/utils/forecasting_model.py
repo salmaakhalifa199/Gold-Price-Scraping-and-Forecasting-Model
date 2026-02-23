@@ -59,46 +59,6 @@ def create_output_folder():
     except Exception as e:
         print(f"Error creating folder: {e}")
         raise
-    """
-    Create output folder inside airflow/include/data/forecasting_output
-    regardless of where the script is executed from
-    """
-    try:
-        # Get absolute path of this file
-        current_file = Path(__file__).resolve()
-
-        # Go up until we reach airflow folder
-        airflow_root = current_file.parents[1]  # adjust if needed
-
-        # Build correct path
-        output_path = airflow_root / "include" / "data" / "forecasting_output"
-
-        output_path.mkdir(parents=True, exist_ok=True)
-
-        print(f"📁 Output directory: {output_path}\n")
-        return output_path
-
-    except Exception as e:
-        print(f"Error creating folder: {e}")
-        raise
-    """
-    Create output folder at the specified location
-    """
-    # Use the specific path requested
-    output_path = Path("./include/data/forecasting_output")
-    
-    try:
-        output_path.mkdir(parents=True, exist_ok=True)
-        print(f"📁 Output directory: {output_path.absolute()}\n")
-        return output_path
-    except Exception as e:
-        print(f"Error creating folder: {e}")
-        # Fallback to current directory if specified path fails
-        fallback = Path("gold_price_forecasting_results")
-        fallback.mkdir(parents=True, exist_ok=True)
-        print(f"📁 Using fallback directory: {fallback.absolute()}\n")
-        return fallback
-
 OUTPUT_DIR = create_output_folder()
 
 
@@ -600,17 +560,32 @@ def analyze_residuals(fitted_model, model_type):
 # STEP 11: FUTURE FORECASTING
 # ============================================================================
 
-def forecast_future_prices(fitted_model, test_data, periods=30):
-    """Forecast future prices beyond test set"""
+def forecast_future_prices(model, last_data, periods=30):
+    """
+    Forecast future prices and return a DataFrame
+    """
+
+    import pandas as pd
     
-    forecast = fitted_model.get_forecast(steps=periods)
-    forecast_df = forecast.summary_frame()
+    # Ensure last_data index is datetime
+    if not pd.api.types.is_datetime64_any_dtype(last_data.index):
+        last_data.index = pd.to_datetime(last_data.index)
     
-    # Get the last date from test_data instead of model.endog
-    last_date = test_data.index[-1]
-    future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), 
-                                 periods=periods, freq='D')
+    # Get last date
+    last_date = last_data.index[-1]
+    
+    # Make forecast
+    forecast_res = model.get_forecast(steps=periods)
+    forecast_df = forecast_res.summary_frame()
+    
+    # Generate future dates correctly
+    future_dates = [last_date + pd.Timedelta(days=i) for i in range(1, periods+1)]
+    
+    forecast_df = forecast_df[['mean', 'mean_ci_lower', 'mean_ci_upper']].copy()
     forecast_df.index = future_dates
+    forecast_df.rename(columns={'mean': 'predicted_price',
+                                'mean_ci_lower': 'lower_bound',
+                                'mean_ci_upper': 'upper_bound'}, inplace=True)
     
     return forecast_df
 
@@ -819,3 +794,68 @@ if __name__ == "__main__":
         import traceback
         print("\nFull traceback:")
         traceback.print_exc()
+
+def save_forecast_to_db(forecast_df, model_metrics, model_name='ARIMA'):
+    """
+    Save forecast results and model performance to PostgreSQL
+    
+    Args:
+        forecast_df: DataFrame with columns [date, predicted_price, lower_bound, upper_bound]
+        model_metrics: dict with keys [rmse, mae, mape, train_size, test_size, test_start, test_end]
+        model_name: str, name of the model
+    """
+    import psycopg2
+    from datetime import datetime
+    
+    DB_PARAMS = {
+        'host': 'localhost',
+        'port': 5432,
+        'database': 'gold_prices_db',
+        'user': 'postgres',
+        'password': 'postgres'
+    }
+    
+    conn = psycopg2.connect(**DB_PARAMS)
+    cursor = conn.cursor()
+    
+    try:
+        # Save forecasts
+        for _, row in forecast_df.iterrows():
+            cursor.execute("""
+                INSERT INTO gold_forecasts (forecast_date, predicted_price, lower_bound, upper_bound, model_name)
+                VALUES (%s, %s, %s, %s, %s)
+            """, (
+                row['date'],
+                float(row['predicted_price']),
+                float(row['lower_bound']),
+                float(row['upper_bound']),
+                model_name
+            ))
+        
+        # Save model performance
+        cursor.execute("""
+            INSERT INTO model_performance 
+            (model_name, rmse, mae, mape, training_date, test_start_date, test_end_date, train_size, test_size)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            model_name,
+            float(model_metrics['rmse']),
+            float(model_metrics['mae']),
+            float(model_metrics['mape']),
+            datetime.now().date(),
+            model_metrics.get('test_start'),
+            model_metrics.get('test_end'),
+            model_metrics.get('train_size'),
+            model_metrics.get('test_size')
+        ))
+        
+        conn.commit()
+        print(f"✅ Saved {len(forecast_df)} forecasts and model metrics to database")
+        
+    except Exception as e:
+        conn.rollback()
+        print(f"❌ Error saving to database: {e}")
+        raise
+    finally:
+        cursor.close()
+        conn.close()

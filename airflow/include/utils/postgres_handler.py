@@ -12,36 +12,38 @@ class PostgresHandler:
             password=os.getenv("DB_PASSWORD", "postgres")
         )
         self.cursor = self.conn.cursor()
-    
+
     def insert_gold_prices(self, data_list):
-        """
-        Insert gold price data
-        data_list: [{'date': '2024-01-01', 'open': 2000.0, 'high': 2010.0, 
-                     'low': 1990.0, 'close': 2005.0, 'volume': 1000000}, ...]
-        """
         insert_query = """
-            INSERT INTO gold_prices 
-            (price_date, open_price, close_price, high_price, low_price, volume)
+            INSERT INTO gold_prices (
+                price_date,
+                open_price,
+                high_price,
+                low_price,
+                close_price,
+                volume
+            )
             VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (price_date) DO UPDATE SET
                 open_price = EXCLUDED.open_price,
-                close_price = EXCLUDED.close_price,
                 high_price = EXCLUDED.high_price,
                 low_price = EXCLUDED.low_price,
+                close_price = EXCLUDED.close_price,
                 volume = EXCLUDED.volume,
                 updated_at = CURRENT_TIMESTAMP;
         """
-        
+
+        # ✅ THIS MUST BE INDENTED INSIDE THE METHOD
         for data in data_list:
             self.cursor.execute(insert_query, (
                 data['date'],
                 data.get('open'),
-                data['close'],
                 data.get('high'),
                 data.get('low'),
+                data['close'],
                 data.get('volume')
             ))
-        
+
         self.conn.commit()
         print(f"✓ Inserted {len(data_list)} records")
     

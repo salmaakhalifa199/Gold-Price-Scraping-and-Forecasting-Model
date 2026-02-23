@@ -48,7 +48,7 @@ class GoldPriceEDA:
     
     def run_full_analysis(self):
         """Run complete EDA pipeline"""
-        logger.info("Starting comprehensive EDA...")
+        logger.info(f"Rows after cleaning: {len(self.df)}")
         
         self._compute_summary_statistics()
         self._analyze_trends()
@@ -115,16 +115,29 @@ class GoldPriceEDA:
     
     def _analyze_trends(self):
         """Analyze overall trends"""
-        logger.info("Analyzing price trends...")
+        logger.info(f"Rows after return alignment: {len(self.df)}")
         
-        # Calculate returns
-        self.df['daily_return'] = self.df['close'].pct_change() * 100
-        self.df['cumulative_return'] = (1 + self.df['close'].pct_change()).cumprod() - 1
+        # Ensure proper ordering
+        self.df = self.df.sort_values("date").reset_index(drop=True)
+
+        # Compute returns
+        returns = self.df['close'].pct_change()
+
+        # Drop NaNs and ALIGN
+        returns = returns.dropna()
+        self.df = self.df.loc[returns.index].copy()
+
+        # Assign back
+        self.df['daily_return'] = returns.values * 100
+        self.df['cumulative_return'] = (1 + returns.values).cumprod() - 1
         
         # Calculate moving averages
-        self.df['ma_7'] = self.df['close'].rolling(window=7).mean()
-        self.df['ma_30'] = self.df['close'].rolling(window=30).mean()
-        self.df['ma_90'] = self.df['close'].rolling(window=90).mean()
+        self.df['ma_7'] = self.df['close'].rolling(7).mean()
+        self.df['ma_30'] = self.df['close'].rolling(30).mean()
+        self.df['ma_90'] = self.df['close'].rolling(90).mean()
+
+        # Drop rows where rolling windows are invalid
+        self.df = self.df.dropna().reset_index(drop=True)
         
         # Trend statistics
         total_return = float((self.df['close'].iloc[-1] / self.df['close'].iloc[0] - 1) * 100)
@@ -164,6 +177,7 @@ class GoldPriceEDA:
         """Detect seasonal patterns"""
         logger.info("Analyzing seasonal patterns...")
         
+        self.df = self.df.dropna(subset=['daily_return'])
         # Extract temporal features
         self.df['month'] = self.df['date'].dt.month
         self.df['quarter'] = self.df['date'].dt.quarter
@@ -328,8 +342,9 @@ class GoldPriceEDA:
         """Plot daily returns"""
         fig, axes = plt.subplots(2, 1, figsize=(14, 10))
         
+        plot_df = self.df.dropna(subset=['daily_return'])
         # Returns over time
-        axes[0].plot(self.df['date'], self.df['daily_return'], linewidth=1, alpha=0.7)
+        axes[0].plot(plot_df['date'], plot_df['daily_return'], linewidth=1, alpha=0.7)
         axes[0].axhline(y=0, color='red', linestyle='--', linewidth=1)
         axes[0].set_xlabel('Date', fontsize=12, fontweight='bold')
         axes[0].set_ylabel('Daily Return (%)', fontsize=12, fontweight='bold')

@@ -9,3 +9,7 @@ SQLAlchemy
 matplotlib
 seaborn
 scipy
+streamlit
+plotly
+statsmodels
+scikit-learn
