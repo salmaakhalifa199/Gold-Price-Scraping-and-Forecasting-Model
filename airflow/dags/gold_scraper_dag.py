@@ -426,15 +426,18 @@ def save_forecast_to_db_task(**context):
 
         cursor.execute("""
             INSERT INTO model_performance
-                (model_name, rmse, mae, mape, training_date)
-            VALUES (%s, %s, %s, %s, %s)
+                (model_name, rmse, mae, mape, training_date, train_size, test_size)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
         """, (
             best_model_name,
             float(model_metrics['rmse']),
             float(model_metrics['mae']),
             float(model_metrics['mape']),
             datetime.now().date(),
+            int(model_metrics['train_size']),
+            int(model_metrics['test_size']),
         ))
+        
 
         conn.commit()
         cursor.close()

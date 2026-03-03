@@ -75,7 +75,7 @@ class GoldPriceEDA:
         
         close_prices = self.df['close']
         
-        stats = {
+        stats_data = {
             'count': len(self.df),
             'date_range': {
                 'start': str(self.df['date'].min().date()),
@@ -100,57 +100,47 @@ class GoldPriceEDA:
             }
         }
         
-        self.stats_report['summary'] = stats
+        self.stats_report['summary'] = stats_data
         
         logger.info("=" * 60)
         logger.info("SUMMARY STATISTICS")
         logger.info("=" * 60)
-        logger.info(f"Total Records: {stats['count']}")
-        logger.info(f"Date Range: {stats['date_range']['start']} to {stats['date_range']['end']}")
-        logger.info(f"Mean Price: ${stats['price_statistics']['mean']:,.2f}")
-        logger.info(f"Median Price: ${stats['price_statistics']['median']:,.2f}")
-        logger.info(f"Std Dev: ${stats['price_statistics']['std']:,.2f}")
-        logger.info(f"Price Range: ${stats['price_statistics']['min']:,.2f} - ${stats['price_statistics']['max']:,.2f}")
+        logger.info(f"Total Records: {stats_data['count']}")
+        logger.info(f"Date Range: {stats_data['date_range']['start']} to {stats_data['date_range']['end']}")
+        logger.info(f"Mean Price: ${stats_data['price_statistics']['mean']:,.2f}")
+        logger.info(f"Median Price: ${stats_data['price_statistics']['median']:,.2f}")
+        logger.info(f"Std Dev: ${stats_data['price_statistics']['std']:,.2f}")
+        logger.info(f"Price Range: ${stats_data['price_statistics']['min']:,.2f} - ${stats_data['price_statistics']['max']:,.2f}")
         logger.info("=" * 60)
     
     def _analyze_trends(self):
         """Analyze overall trends"""
-        logger.info(f"Rows after return alignment: {len(self.df)}")
-        
         # Ensure proper ordering
         self.df = self.df.sort_values("date").reset_index(drop=True)
 
-        # Compute returns
+        # Compute returns on the full dataset (no rows dropped)
         returns = self.df['close'].pct_change()
+        self.df['daily_return'] = returns * 100
+        self.df['cumulative_return'] = (1 + returns).cumprod() - 1
 
-        # Drop NaNs and ALIGN
-        returns = returns.dropna()
-        self.df = self.df.loc[returns.index].copy()
-
-        # Assign back
-        self.df['daily_return'] = returns.values * 100
-        self.df['cumulative_return'] = (1 + returns.values).cumprod() - 1
-        
-        # Calculate moving averages
+        # Calculate moving averages — NaN at start is intentional and harmless
         self.df['ma_7'] = self.df['close'].rolling(7).mean()
         self.df['ma_30'] = self.df['close'].rolling(30).mean()
         self.df['ma_90'] = self.df['close'].rolling(90).mean()
 
-        # Drop rows where rolling windows are invalid
-        self.df = self.df.dropna().reset_index(drop=True)
-        
-        # Trend statistics
+        logger.info(f"Rows after trend analysis: {len(self.df)}")
+
+        # Trend statistics — use dropna only for return-based calculations
+        valid_returns = self.df['daily_return'].dropna()
+        up_days = (valid_returns > 0).sum()
+        down_days = (valid_returns < 0).sum()
         total_return = float((self.df['close'].iloc[-1] / self.df['close'].iloc[0] - 1) * 100)
-        
-        # Count up and down days
-        up_days = (self.df['daily_return'] > 0).sum()
-        down_days = (self.df['daily_return'] < 0).sum()
-        
+
         trends = {
             'total_return_pct': total_return,
             'up_days': int(up_days),
             'down_days': int(down_days),
-            'up_days_pct': float(up_days / len(self.df) * 100),
+            'up_days_pct': float(up_days / len(valid_returns) * 100),
             'best_day': {
                 'date': str(self.df.loc[self.df['daily_return'].idxmax(), 'date'].date()),
                 'return': float(self.df['daily_return'].max())
@@ -177,19 +167,22 @@ class GoldPriceEDA:
         """Detect seasonal patterns"""
         logger.info("Analyzing seasonal patterns...")
         
-        self.df = self.df.dropna(subset=['daily_return'])
-        # Extract temporal features
+        # Work on rows that have valid daily_return
+        df_valid = self.df.dropna(subset=['daily_return']).copy()
+
+        df_valid['month'] = df_valid['date'].dt.month
+        df_valid['quarter'] = df_valid['date'].dt.quarter
+        df_valid['day_of_week'] = df_valid['date'].dt.dayofweek
+        df_valid['day_name'] = df_valid['date'].dt.day_name()
+
+        # Also add to main df for plotting
         self.df['month'] = self.df['date'].dt.month
         self.df['quarter'] = self.df['date'].dt.quarter
         self.df['day_of_week'] = self.df['date'].dt.dayofweek
         self.df['day_name'] = self.df['date'].dt.day_name()
-        
-        # Monthly statistics
-        monthly_avg = self.df.groupby('month')['close'].mean()
-        monthly_returns = self.df.groupby('month')['daily_return'].mean()
-        
-        # Day of week statistics
-        dow_avg = self.df.groupby('day_name')['daily_return'].mean()
+
+        monthly_returns = df_valid.groupby('month')['daily_return'].mean()
+        dow_avg = df_valid.groupby('day_name')['daily_return'].mean()
         
         seasonality = {
             'best_month': {
@@ -219,11 +212,10 @@ class GoldPriceEDA:
         """Analyze price volatility"""
         logger.info("Analyzing volatility...")
         
-        # Calculate volatility (rolling standard deviation of returns)
         self.df['volatility_30d'] = self.df['daily_return'].rolling(window=30).std()
         
         volatility = {
-            'current_volatility': float(self.df['volatility_30d'].iloc[-1]),
+            'current_volatility': float(self.df['volatility_30d'].dropna().iloc[-1]),
             'avg_volatility': float(self.df['volatility_30d'].mean()),
             'max_volatility': float(self.df['volatility_30d'].max()),
             'min_volatility': float(self.df['volatility_30d'].min())
@@ -243,13 +235,8 @@ class GoldPriceEDA:
         """Detect anomalies using statistical methods"""
         logger.info("Detecting anomalies...")
 
-        # Work only on valid returns
         returns_df = self.df[['date', 'daily_return']].dropna().copy()
-
-        # Z-score
         returns_df['z_score'] = np.abs(stats.zscore(returns_df['daily_return']))
-
-        # Anomalies threshold
         anomalies = returns_df[returns_df['z_score'] > 3]
 
         anomaly_info = {
@@ -291,7 +278,6 @@ class GoldPriceEDA:
         """Plot price distribution"""
         fig, axes = plt.subplots(1, 2, figsize=(14, 6))
         
-        # Histogram
         axes[0].hist(self.df['close'], bins=50, edgecolor='black', alpha=0.7)
         axes[0].axvline(self.df['close'].mean(), color='red', linestyle='--', linewidth=2, label='Mean')
         axes[0].axvline(self.df['close'].median(), color='green', linestyle='--', linewidth=2, label='Median')
@@ -301,7 +287,6 @@ class GoldPriceEDA:
         axes[0].legend()
         axes[0].grid(True, alpha=0.3)
         
-        # Box plot
         axes[1].boxplot([self.df['close']], labels=['Close Price'])
         axes[1].set_ylabel('Price (USD)', fontsize=12, fontweight='bold')
         axes[1].set_title('Price Box Plot', fontsize=14, fontweight='bold')
@@ -316,7 +301,7 @@ class GoldPriceEDA:
         logger.info(f"✅ Generated: price_distribution.png")
     
     def _plot_moving_averages(self):
-        """Plot moving averages"""
+        """Plot moving averages — NaN rows are skipped automatically by matplotlib"""
         fig, ax = plt.subplots(figsize=(14, 7))
         
         ax.plot(self.df['date'], self.df['close'], label='Close Price', linewidth=1.5, alpha=0.7)
@@ -343,7 +328,7 @@ class GoldPriceEDA:
         fig, axes = plt.subplots(2, 1, figsize=(14, 10))
         
         plot_df = self.df.dropna(subset=['daily_return'])
-        # Returns over time
+
         axes[0].plot(plot_df['date'], plot_df['daily_return'], linewidth=1, alpha=0.7)
         axes[0].axhline(y=0, color='red', linestyle='--', linewidth=1)
         axes[0].set_xlabel('Date', fontsize=12, fontweight='bold')
@@ -351,8 +336,7 @@ class GoldPriceEDA:
         axes[0].set_title('Daily Returns Over Time', fontsize=14, fontweight='bold')
         axes[0].grid(True, alpha=0.3)
         
-        # Returns distribution
-        axes[1].hist(self.df['daily_return'].dropna(), bins=50, edgecolor='black', alpha=0.7)
+        axes[1].hist(plot_df['daily_return'], bins=50, edgecolor='black', alpha=0.7)
         axes[1].axvline(0, color='red', linestyle='--', linewidth=2)
         axes[1].set_xlabel('Daily Return (%)', fontsize=12, fontweight='bold')
         axes[1].set_ylabel('Frequency', fontsize=12, fontweight='bold')
@@ -371,8 +355,9 @@ class GoldPriceEDA:
         """Plot seasonal patterns"""
         fig, axes = plt.subplots(1, 2, figsize=(14, 6))
         
-        # Monthly average returns
-        monthly_returns = self.df.groupby('month')['daily_return'].mean()
+        df_valid = self.df.dropna(subset=['daily_return'])
+        monthly_returns = df_valid.groupby('month')['daily_return'].mean()
+
         axes[0].bar(monthly_returns.index, monthly_returns.values, color='skyblue', edgecolor='black')
         axes[0].axhline(y=0, color='red', linestyle='--', linewidth=1)
         axes[0].set_xlabel('Month', fontsize=12, fontweight='bold')
@@ -381,9 +366,8 @@ class GoldPriceEDA:
         axes[0].set_xticks(range(1, 13))
         axes[0].grid(True, alpha=0.3, axis='y')
         
-        # Day of week average returns
         day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
-        dow_returns = self.df.groupby('day_name')['daily_return'].mean().reindex(day_order)
+        dow_returns = df_valid.groupby('day_name')['daily_return'].mean().reindex(day_order)
         axes[1].bar(range(len(dow_returns)), dow_returns.values, color='lightcoral', edgecolor='black')
         axes[1].axhline(y=0, color='red', linestyle='--', linewidth=1)
         axes[1].set_xlabel('Day of Week', fontsize=12, fontweight='bold')
@@ -403,7 +387,6 @@ class GoldPriceEDA:
     
     def _plot_correlation_heatmap(self):
         """Plot correlation heatmap"""
-        # Select numeric columns
         corr_cols = ['open', 'high', 'low', 'close', 'volume']
         corr_matrix = self.df[corr_cols].corr()
         
@@ -422,16 +405,13 @@ class GoldPriceEDA:
     
     def _plot_candlestick_style(self):
         """Plot candlestick-style chart"""
-        # Sample last 60 days for readability
         recent_data = self.df.tail(60)
         
         fig, ax = plt.subplots(figsize=(14, 7))
         
-        # Determine up/down days
         colors = ['green' if row['close'] >= row['open'] else 'red' 
                   for _, row in recent_data.iterrows()]
         
-        # Plot high-low lines
         for idx, (_, row) in enumerate(recent_data.iterrows()):
             ax.plot([idx, idx], [row['low'], row['high']], color='black', linewidth=1)
             ax.plot([idx, idx], [row['open'], row['close']], color=colors[idx], linewidth=4)
@@ -450,34 +430,30 @@ class GoldPriceEDA:
         logger.info(f"✅ Generated: candlestick_chart.png")
     
     def get_stats_report(self):
-        """Return the statistics report"""
         return self.stats_report
     
     def get_plot_paths(self):
-        """Return list of generated plot paths"""
         return self.plots
 
 
 def perform_eda(df, output_dir='data/eda'):
     """
     Convenience function to perform EDA
-    
+
     Args:
         df (pd.DataFrame): Gold price data
         output_dir (str): Directory to save plots
-    
+
     Returns:
         tuple: (stats_report, plot_paths)
     """
     analyzer = GoldPriceEDA(df, output_dir)
     stats_report, plots = analyzer.run_full_analysis()
-    
     return stats_report, plots
 
 
 # Test the analyzer
 if __name__ == "__main__":
-    # Create sample data
     dates = pd.date_range(start='2023-01-01', end='2024-12-31', freq='D')
     np.random.seed(42)
     prices = 2000 + np.cumsum(np.random.randn(len(dates)) * 10)
@@ -491,5 +467,6 @@ if __name__ == "__main__":
         'volume': np.random.randint(100000, 200000, len(dates))
     })
     
-    stats, plots = perform_eda(test_data, 'test_eda')
+    stats_result, plots = perform_eda(test_data, 'test_eda')
     print(f"Generated {len(plots)} plots")
+    print(f"Total Records: {stats_result['summary']['count']}")
