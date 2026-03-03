@@ -83,13 +83,12 @@ class DatabaseConnector:
     def get_model_performance(self):
         df = self._query("""
             SELECT model_name, rmse, mae, mape,
-                   training_date, train_size, test_size, created_at
+                training_date, train_size, test_size, created_at
             FROM model_performance
             ORDER BY created_at DESC
         """)
         df["training_date"] = pd.to_datetime(df["training_date"])
-        # ✅ Parse created_at as proper timestamp so sort works correctly
-        df["created_at"] = pd.to_datetime(df["created_at"])
+        df["created_at"]    = pd.to_datetime(df["created_at"])
         return df
 
     # =========================

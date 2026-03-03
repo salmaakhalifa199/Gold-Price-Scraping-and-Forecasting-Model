@@ -284,9 +284,8 @@ def display_model_metrics(metrics_df, df_forecasts=None):
     metrics_df['created_at'] = pd.to_datetime(metrics_df['created_at'])
     latest_metrics = metrics_df.sort_values('created_at', ascending=False).iloc[0]
 
-    # ✅ Clean retrieval of train/test size
-    train_size = int(latest_metrics.get('train_size', 0) or 0)
-    test_size  = int(latest_metrics.get('test_size',  0) or 0)
+    train_size = int(latest_metrics['train_size'] if pd.notna(latest_metrics['train_size']) else 0)
+    test_size  = int(latest_metrics['test_size']  if pd.notna(latest_metrics['test_size'])  else 0)
 
     st.subheader("🤖 Model Performance Metrics")
 
