@@ -5,7 +5,6 @@ Complete interactive dashboard with historical data and AI predictions
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-import plotly.express as px
 from datetime import datetime, timedelta
 import sys
 import os
@@ -35,13 +34,6 @@ st.markdown("""
         text-align: center;
         padding: 1rem 0;
     }
-    .metric-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 1.5rem;
-        border-radius: 1rem;
-        color: white;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-    }
     .stMetric {
         background-color: #f0f2f6;
         padding: 1rem;
@@ -59,62 +51,62 @@ def get_db_connection():
 
 @st.cache_data(ttl=300)
 def load_historical_data(_db):
-    """Load historical price data"""
     return _db.get_all_gold_prices()
 
 
 @st.cache_data(ttl=300)
 def load_forecasts(_db, model_name=None):
-    """Load forecast data"""
     return _db.get_forecasts(model_name)
 
 
 @st.cache_data(ttl=300)
 def load_model_performance(_db):
-    """Load model performance metrics"""
     return _db.get_model_performance()
 
 
 @st.cache_data(ttl=300)
 def load_summary_stats(_db):
-    """Load summary statistics"""
     return _db.get_summary_stats()
 
 
-def calculate_kpis(df):
-    """Calculate key performance indicators"""
-    if df.empty or len(df) < 2:
+def calculate_kpis(df_filtered, df_full=None):
+    """
+    Calculate KPIs.
+    - df_filtered : date-range filtered data (for current price, ATH, ATL, volatility)
+    - df_full     : full unfiltered dataset  (for total return — always from day 1)
+    """
+    if df_filtered.empty or len(df_filtered) < 2:
         return {}
 
-    latest   = df.iloc[-1]
-    previous = df.iloc[-2] if len(df) > 1 else latest
-    first    = df.iloc[0]
+    latest   = df_filtered.iloc[-1]
+    previous = df_filtered.iloc[-2]
+
+    # ✅ Total return always calculated from the very first record in the full dataset
+    first = df_full.iloc[0] if df_full is not None and not df_full.empty else df_filtered.iloc[0]
 
     daily_change     = latest['close'] - previous['close']
     daily_change_pct = (daily_change / previous['close']) * 100
     total_return     = ((latest['close'] - first['close']) / first['close']) * 100
 
-    if len(df) >= 30:
-        returns    = df['close'].pct_change().tail(30)
-        volatility = returns.std() * 100
+    if len(df_filtered) >= 30:
+        volatility = df_filtered['close'].pct_change().tail(30).std() * 100
     else:
         volatility = 0
 
     return {
-        'current_price':   latest['close'],
-        'daily_change':    daily_change,
+        'current_price':    latest['close'],
+        'daily_change':     daily_change,
         'daily_change_pct': daily_change_pct,
-        'all_time_high':   df['high'].max(),
-        'all_time_low':    df['low'].min(),
-        'total_return':    total_return,
-        'volatility_30d':  volatility,
-        'avg_volume':      df['volume'].mean(),
-        'latest_date':     latest['date']
+        'all_time_high':    df_filtered['high'].max(),
+        'all_time_low':     df_filtered['low'].min(),
+        'total_return':     total_return,
+        'volatility_30d':   volatility,
+        'avg_volume':       df_filtered['volume'].mean(),
+        'latest_date':      latest['date']
     }
 
 
 def plot_historical_with_forecast(historical_df, forecast_df):
-    """Plot historical prices with forecasts"""
     fig = go.Figure()
 
     fig.add_trace(go.Scatter(
@@ -136,7 +128,6 @@ def plot_historical_with_forecast(historical_df, forecast_df):
             hovertemplate='Date: %{x}<br>Forecast: $%{y:,.2f}<extra></extra>'
         ))
 
-        # Upper bound (invisible, needed for fill)
         fig.add_trace(go.Scatter(
             x=forecast_df['forecast_date'],
             y=forecast_df['upper_bound'],
@@ -147,7 +138,6 @@ def plot_historical_with_forecast(historical_df, forecast_df):
             hoverinfo='skip'
         ))
 
-        # Lower bound with fill to upper
         fig.add_trace(go.Scatter(
             x=forecast_df['forecast_date'],
             y=forecast_df['lower_bound'],
@@ -173,9 +163,7 @@ def plot_historical_with_forecast(historical_df, forecast_df):
 
 
 def plot_price_comparison(df):
-    """Plot OHLC comparison"""
     fig = go.Figure()
-
     colors = {'open': '#3498db', 'high': '#2ecc71', 'low': '#e74c3c', 'close': '#f39c12'}
 
     for col in ['open', 'high', 'low', 'close']:
@@ -191,12 +179,10 @@ def plot_price_comparison(df):
         xaxis_title='Date', yaxis_title='Price (USD)',
         hovermode='x unified', template='plotly_white', height=500
     )
-
     return fig
 
 
 def plot_candlestick(df):
-    """Create candlestick chart"""
     fig = go.Figure(data=[go.Candlestick(
         x=df['date'],
         open=df['open'], high=df['high'],
@@ -212,12 +198,10 @@ def plot_candlestick(df):
         template='plotly_white', height=500,
         xaxis_rangeslider_visible=False
     )
-
     return fig
 
 
 def plot_volume_analysis(df):
-    """Plot volume analysis"""
     colors = ['#e74c3c' if df.iloc[i]['close'] < df.iloc[i]['open'] else '#2ecc71'
               for i in range(len(df))]
 
@@ -232,12 +216,10 @@ def plot_volume_analysis(df):
         xaxis_title='Date', yaxis_title='Volume',
         template='plotly_white', height=400
     )
-
     return fig
 
 
 def plot_forecast_vs_actual(historical_df, forecast_df, test_start_date):
-    """Plot forecast accuracy on test set"""
     test_actual = historical_df[historical_df['date'] >= pd.to_datetime(test_start_date)].copy()
 
     if test_actual.empty or forecast_df.empty:
@@ -265,19 +247,16 @@ def plot_forecast_vs_actual(historical_df, forecast_df, test_start_date):
         hovermode='x unified', template='plotly_white',
         height=500, legend=dict(x=0.01, y=0.99)
     )
-
     return fig
 
 
 def plot_moving_averages(df):
-    """Plot price with moving averages"""
     df = df.copy()
     df['MA_7']  = df['close'].rolling(window=7).mean()
     df['MA_30'] = df['close'].rolling(window=30).mean()
     df['MA_90'] = df['close'].rolling(window=90).mean()
 
     fig = go.Figure()
-
     fig.add_trace(go.Scatter(x=df['date'], y=df['close'],  mode='lines', name='Close Price',
                              line=dict(color='lightgray', width=1), opacity=0.5))
     fig.add_trace(go.Scatter(x=df['date'], y=df['MA_7'],   mode='lines', name='7-Day MA',
@@ -292,17 +271,17 @@ def plot_moving_averages(df):
         xaxis_title='Date', yaxis_title='Price (USD)',
         hovermode='x unified', template='plotly_white', height=500
     )
-
     return fig
 
 
 def display_model_metrics(metrics_df, df_forecasts=None):
-    """Display model performance metrics"""
     if metrics_df.empty:
         st.warning("⚠️ No model performance data available")
         return
 
-    # ✅ Sort by created_at timestamp — always picks the truly latest row
+    # ✅ Parse created_at as datetime then sort — picks truly latest row
+    metrics_df = metrics_df.copy()
+    metrics_df['created_at'] = pd.to_datetime(metrics_df['created_at'])
     latest_metrics = metrics_df.sort_values('created_at', ascending=False).iloc[0]
 
     # ✅ Clean retrieval of train/test size
@@ -345,7 +324,7 @@ def display_model_metrics(metrics_df, df_forecasts=None):
                 st.write("- Start Date: N/A")
                 st.write("- End Date: N/A")
 
-    # Model comparison table if multiple runs exist
+    # Model comparison table
     if len(metrics_df) > 1:
         st.subheader("📊 Model Comparison")
         comparison_df = metrics_df[['model_name', 'rmse', 'mae', 'mape', 'training_date']].copy()
@@ -354,8 +333,6 @@ def display_model_metrics(metrics_df, df_forecasts=None):
 
 
 def main():
-    """Main dashboard function"""
-
     st.markdown('<h1 class="main-header">💰 Gold Price Forecasting Dashboard</h1>',
                 unsafe_allow_html=True)
     st.markdown(
@@ -416,7 +393,8 @@ def main():
     show_ma          = st.sidebar.checkbox("Moving Averages",   value=False)
     show_comparison  = st.sidebar.checkbox("OHLC Comparison",   value=True)
 
-    kpis = calculate_kpis(df_filtered)
+    # ✅ Pass full df_historical so total return is always from day 1
+    kpis = calculate_kpis(df_filtered, df_historical)
 
     # ── KPI Banner ────────────────────────────────────────────────────
     st.subheader("📊 Key Performance Indicators")
@@ -429,18 +407,19 @@ def main():
                   delta=f"{kpis.get('daily_change_pct', 0):.2f}%",
                   delta_color=delta_color)
     with col2:
-        st.metric("All-Time High",      f"${kpis.get('all_time_high', 0):,.2f}")
+        st.metric("All-Time High",     f"${kpis.get('all_time_high', 0):,.2f}")
     with col3:
-        st.metric("All-Time Low",       f"${kpis.get('all_time_low', 0):,.2f}")
+        st.metric("All-Time Low",      f"${kpis.get('all_time_low', 0):,.2f}")
     with col4:
-        st.metric("Total Return",       f"{kpis.get('total_return', 0):.2f}%")
+        st.metric("Total Return",      f"{kpis.get('total_return', 0):.2f}%")
     with col5:
-        st.metric("30-Day Volatility",  f"{kpis.get('volatility_30d', 0):.2f}%")
+        st.metric("30-Day Volatility", f"{kpis.get('volatility_30d', 0):.2f}%")
 
     col6, col7, col8 = st.columns(3)
     with col6:
         st.metric("Average Volume",  f"{kpis.get('avg_volume', 0):,.0f}")
     with col7:
+        # ✅ Use summary_stats from DB — always reflects full record count
         st.metric("Total Records",   f"{summary_stats.get('total_records', 0):,}")
     with col8:
         st.metric("Data Range",      f"{(max_date - min_date).days} days")

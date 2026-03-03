@@ -82,11 +82,14 @@ class DatabaseConnector:
     # =========================
     def get_model_performance(self):
         df = self._query("""
-            SELECT model_name, rmse, mae, mape, training_date, created_at
+            SELECT model_name, rmse, mae, mape,
+                   training_date, train_size, test_size, created_at
             FROM model_performance
             ORDER BY created_at DESC
         """)
         df["training_date"] = pd.to_datetime(df["training_date"])
+        # ✅ Parse created_at as proper timestamp so sort works correctly
+        df["created_at"] = pd.to_datetime(df["created_at"])
         return df
 
     # =========================
@@ -95,15 +98,15 @@ class DatabaseConnector:
     def get_summary_stats(self):
         df = self._query("""
             SELECT
-                COUNT(*)        AS total_records,
-                MIN(price_date) AS min_date,
-                MAX(price_date) AS max_date,
+                COUNT(*)         AS total_records,
+                MIN(price_date)  AS min_date,
+                MAX(price_date)  AS max_date,
                 AVG(close_price) AS avg_close_price
             FROM gold_prices
         """)
         return {
-            "total_records":    int(df.iloc[0]["total_records"]),
-            "min_date":         df.iloc[0]["min_date"],
-            "max_date":         df.iloc[0]["max_date"],
-            "avg_close_price":  float(df.iloc[0]["avg_close_price"]),
+            "total_records":   int(df.iloc[0]["total_records"]),
+            "min_date":        df.iloc[0]["min_date"],
+            "max_date":        df.iloc[0]["max_date"],
+            "avg_close_price": float(df.iloc[0]["avg_close_price"]),
         }
