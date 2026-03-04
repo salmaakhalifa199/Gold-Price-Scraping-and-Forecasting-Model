@@ -1,6 +1,6 @@
 """
 Gold Price Analysis & Forecasting Dashboard
-Complete interactive dashboard with historical data and AI predictions
+Complete interactive dashboard with historical data and predictions
 """
 import streamlit as st
 import pandas as pd
@@ -123,7 +123,7 @@ def plot_historical_with_forecast(historical_df, forecast_df):
             x=forecast_df['forecast_date'],
             y=forecast_df['predicted_price'],
             mode='lines',
-            name='AI Forecast',
+            name='Forecast',
             line=dict(color='#ff7f0e', width=3, dash='dash'),
             hovertemplate='Date: %{x}<br>Forecast: $%{y:,.2f}<extra></extra>'
         ))
@@ -150,7 +150,7 @@ def plot_historical_with_forecast(historical_df, forecast_df):
         ))
 
     fig.update_layout(
-        title={'text': 'Gold Price: Historical Data + AI Forecast', 'font': {'size': 20, 'color': '#2c3e50'}},
+        title={'text': 'Gold Price: Historical Data + Forecast Data', 'font': {'size': 20, 'color': '#2c3e50'}},
         xaxis_title='Date',
         yaxis_title='Price (USD)',
         hovermode='x unified',
@@ -426,7 +426,7 @@ def main():
     st.markdown("---")
 
     # ── Main Chart ────────────────────────────────────────────────────
-    st.subheader("📈 Historical Data & AI Forecast")
+    st.subheader("📈 Historical Data & Forecast Data")
     forecast_data = df_forecasts if (show_forecast and not df_forecasts.empty) else pd.DataFrame()
     st.plotly_chart(plot_historical_with_forecast(df_filtered, forecast_data),
                     use_container_width=True)
